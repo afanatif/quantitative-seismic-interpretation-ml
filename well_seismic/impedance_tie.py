@@ -11,7 +11,7 @@ from scipy.signal import hilbert, butter, filtfilt
 # Define paths
 script_dir = os.path.dirname(os.path.abspath(__file__))
 segy_path = os.path.abspath(os.path.join(script_dir, "..", "segy", "origional.segy"))
-las_dir = os.path.abspath(os.path.join(script_dir, "..", "las"))
+las_dir = os.path.abspath(os.path.join(script_dir, "..", "las_cleaned"))
 output_dir = os.path.abspath(os.path.join(script_dir, "output"))
 
 # Create output folder if it doesn't exist
