@@ -1,604 +1,987 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Sliders, Play, Info } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Layers, Info, Activity, Sliders, Play, MapPin, Database } from 'lucide-react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip as RechartsTooltip, 
+  Legend as RechartsLegend, 
+  ResponsiveContainer 
+} from 'recharts';
+import { thinBedWellsData, frequencySpectrum, geobodiesMetadata } from './thin_bed_data';
+import { wellsConfig } from './data';
 
-export default function ThinBedTab({ wellsData }) {
-  const [subTab, setSubTab] = useState('wedge'); // 'wedge' or 'logs'
-  const [selectedWell, setSelectedWell] = useState('Z-02');
-  const [frequency, setFrequency] = useState(30); // Ricker wavelet frequency (Hz)
-  const wedgeCanvasRef = useRef(null);
-  const tuningCanvasRef = useRef(null);
+// --- Frequency Color Interpolation for Bed Form + Instantaneous Freq Overlay ---
+const getFreqColor = (freq) => {
+  // Map negative instantaneous frequency spikes to bright green, others to grey
+  if (freq < 0) {
+    const norm = Math.min(1.0, Math.abs(freq) / 50.0);
+    return `rgba(34, 197, 94, ${0.4 + 0.6 * norm})`; // Green spikes
+  }
+  return 'rgba(255, 255, 255, 0.05)';
+};
 
-  // ── PART 1: Wedge Modeling Calculations & Rendering ──
+export default function ThinBedTab() {
+  const [slideIdx, setSlideIdx] = useState(0);
+  const [arbLineWells, setArbLineWells] = useState(['Z-03', 'Z-07', 'Z-04']);
+  const [terraceMethod, setTerraceMethod] = useState('zero_crossing'); // 'zero_crossing' or 'inflection_point'
+  const [terraceAttr, setTerraceAttr] = useState('amplitude'); // 'amplitude', 'thickness', 'arc_length', 'event'
+  const [hoveredData, setHoveredData] = useState(null);
+  const [hoveredGeobody, setHoveredGeobody] = useState(null);
+
+  // Canvases refs
+  const canvasRefs = {
+    slide1: useRef(null),
+    slide2_left: useRef(null),
+    slide2_right: useRef(null),
+    slide4_left: useRef(null),
+    slide4_right: useRef(null),
+    slide5_left: useRef(null),
+    slide5_right: useRef(null),
+    slide6_left: useRef(null),
+    slide6_right: useRef(null),
+    slide7_left: useRef(null),
+    slide7_right: useRef(null),
+    slide8_left: useRef(null),
+    slide8_right: useRef(null),
+    slide9_left: useRef(null),
+    slide9_right: useRef(null),
+    slide10_left: useRef(null),
+    slide10_right: useRef(null)
+  };
+
+  // Slides names & titles
+  const slides = [
+    { id: 'intro', title: '1. Raw Seismic Profile' },
+    { id: 'sof', title: '2. Structurally-Oriented Filter (SOF)' },
+    { id: 'spectrum', title: '3. Spectral Enhancement - Power Spectrum' },
+    { id: 'enhancement', title: '4. Spectral Enhancement - Section View' },
+    { id: 'terrace', title: '5. Terrace Wavelet Blocking Attributes' },
+    { id: 'doublet', title: '6. Doublet Attribute Output' },
+    { id: 'neg_ifreq', title: '7. Negative Instantaneous Frequency' },
+    { id: 'bedform', title: '8. Skeletonized Bed Form Lineaments' },
+    { id: 'combined', title: '9. Combined Bed Form & Neg Freq' },
+    { id: 'geobody', title: '10. Doublet-Derived 3D Geobodies' }
+  ];
+
+  const handleNext = () => setSlideIdx((prev) => Math.min(prev + 1, slides.length - 1));
+  const handlePrev = () => setSlideIdx((prev) => Math.max(prev - 1, 0));
+
+  // --- Core Rendering Engine ---
   useEffect(() => {
-    if (subTab !== 'wedge' || !wedgeCanvasRef.current || !tuningCanvasRef.current) return;
+    // 1. Determine active canvases based on slideIdx
+    const activeCanvases = [];
+    const stepId = slides[slideIdx].id;
 
-    const wCanvas = wedgeCanvasRef.current;
-    const wCtx = wCanvas.getContext('2d');
-    const tCanvas = tuningCanvasRef.current;
-    const tCtx = tCanvas.getContext('2d');
-
-    const W = wCanvas.width;
-    const H = wCanvas.height;
-
-    // Ricker Wavelet Generator (dt = 1ms)
-    const dt = 1.0; // 1 ms
-    const lengthMs = 80;
-    const N_wave = Math.floor(lengthMs / dt);
-    const half_wave = Math.floor(N_wave / 2);
-    const wavelet = [];
-    for (let i = 0; i < N_wave; i++) {
-      const tSec = (i - half_wave) * (dt / 1000.0);
-      const pft = Math.PI * frequency * tSec;
-      wavelet.push((1 - 2 * pft * pft) * Math.exp(-pft * pft));
+    if (stepId === 'intro') activeCanvases.push({ ref: canvasRefs.slide1, type: 'raw' });
+    else if (stepId === 'sof') {
+      activeCanvases.push({ ref: canvasRefs.slide2_left, type: 'raw' });
+      activeCanvases.push({ ref: canvasRefs.slide2_right, type: 'filtered' });
+    } else if (stepId === 'enhancement') {
+      activeCanvases.push({ ref: canvasRefs.slide4_left, type: 'filtered' });
+      activeCanvases.push({ ref: canvasRefs.slide4_right, type: 'enhanced' });
+    } else if (stepId === 'terrace') {
+      activeCanvases.push({ ref: canvasRefs.slide5_left, type: 'enhanced' });
+      activeCanvases.push({ ref: canvasRefs.slide5_right, type: 'terrace' });
+    } else if (stepId === 'doublet') {
+      activeCanvases.push({ ref: canvasRefs.slide6_left, type: 'enhanced' });
+      activeCanvases.push({ ref: canvasRefs.slide6_right, type: 'doublet' });
+    } else if (stepId === 'neg_ifreq') {
+      activeCanvases.push({ ref: canvasRefs.slide7_left, type: 'enhanced' });
+      activeCanvases.push({ ref: canvasRefs.slide7_right, type: 'neg_ifreq' });
+    } else if (stepId === 'bedform') {
+      activeCanvases.push({ ref: canvasRefs.slide8_left, type: 'enhanced' });
+      activeCanvases.push({ ref: canvasRefs.slide8_right, type: 'bedform' });
+    } else if (stepId === 'combined') {
+      activeCanvases.push({ ref: canvasRefs.slide9_left, type: 'enhanced' });
+      activeCanvases.push({ ref: canvasRefs.slide9_right, type: 'combined' });
+    } else if (stepId === 'geobody') {
+      activeCanvases.push({ ref: canvasRefs.slide10_left, type: 'enhanced' });
+      activeCanvases.push({ ref: canvasRefs.slide10_right, type: 'geobody' });
     }
 
-    // Generate Wedge Traces
-    // 60 traces across the screen: thickness goes from 0 to 45 ms TWT
-    const nTraces = 60;
-    const traceLength = 120; // 120 ms display window
-    const topTime = 40; // Top sand at 40 ms
-    const tracesData = [];
-    const peakAmps = [];
-    const thicknesses = [];
+    activeCanvases.forEach(({ ref, type }) => {
+      if (!ref.current || arbLineWells.length < 2) return;
+      const canvas = ref.current;
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0); // avoid transform leaks
+      
+      const W = canvas.width;
+      const H = canvas.height;
+      
+      // Clear canvas
+      ctx.fillStyle = '#090d16';
+      ctx.fillRect(0, 0, W, H);
 
-    for (let x = 0; x < nTraces; x++) {
-      const thickness = x * (45.0 / (nTraces - 1)); // thickness in ms TWT
-      thicknesses.push(thickness);
+      const offsetX = 55;
+      const rightMargin = 20;
+      const offsetY = 20;
+      const bottomOffsetY = 40;
+      const plotW = W - offsetX - rightMargin;
+      const plotH = H - offsetY - bottomOffsetY;
 
-      // Reflectivity series: R_top = +1.0, R_bot = -1.0 (Soft Sand model)
-      const reflectivity = new Array(traceLength).fill(0.0);
-      reflectivity[topTime] = 1.0;
-      const botTime = Math.min(traceLength - 1, topTime + Math.round(thickness));
-      reflectivity[botTime] += -1.0; // sum if they overlap at thickness = 0
+      const nPanels = arbLineWells.length - 1;
+      const colsPerPanel = Math.floor(plotW / nPanels);
 
-      // Convolve reflectivity with Ricker wavelet
-      const convolved = new Array(traceLength).fill(0.0);
-      for (let i = 0; i < traceLength; i++) {
-        let val = 0.0;
-        for (let w = 0; w < N_wave; w++) {
-          const rIdx = i - (w - half_wave);
-          if (rIdx >= 0 && rIdx < traceLength) {
-            val += reflectivity[rIdx] * wavelet[w];
+      // Max trace samples (TWT)
+      let maxLen = 0;
+      arbLineWells.forEach(w => {
+        if (thinBedWellsData[w]) maxLen = Math.max(maxLen, thinBedWellsData[w].samples.length);
+      });
+      if (maxLen === 0) return;
+
+      // ── Pass 1: Draw Pixel Background ──
+      for (let p = 0; p < nPanels; p++) {
+        const wellA = thinBedWellsData[arbLineWells[p]];
+        const wellB = thinBedWellsData[arbLineWells[p+1]];
+        if (!wellA || !wellB) continue;
+
+        const startX = offsetX + p * colsPerPanel;
+        const endX = offsetX + (p + 1) * colsPerPanel;
+
+        for (let x = startX; x < endX; x++) {
+          const frac = (x - startX) / colsPerPanel;
+          for (let y = offsetY; y < offsetY + plotH; y++) {
+            const fracY = (y - offsetY) / plotH;
+            const sIdx = Math.min(Math.floor(fracY * maxLen), wellA.samples.length - 1);
+            
+            const sampleA = wellA.samples[sIdx];
+            const sampleB = wellB.samples[sIdx];
+            if (!sampleA || !sampleB) continue;
+
+            let color = '';
+            // Determine attribute values based on canvas type
+            const getVal = (s) => {
+              if (type === 'raw') return s.seismic_raw;
+              if (type === 'filtered') return s.seismic_filtered;
+              if (type === 'enhanced') return s.seismic_enhanced;
+              if (type === 'terrace') {
+                const suffix = terraceMethod === 'zero_crossing' ? 'zc' : 'ip';
+                return s[`terrace_${terraceAttr}_${suffix}`];
+              }
+              if (type === 'doublet') return s.doublet;
+              if (type === 'neg_ifreq') return s.neg_ifreq;
+              if (type === 'bedform') return s.bed_form_cos;
+              if (type === 'combined') return s.bed_form_cos;
+              if (type === 'geobody') return s.seismic_enhanced; // geobodies are drawn on enhanced seismic
+              return 0;
+            };
+
+            const valA = getVal(sampleA);
+            const valB = getVal(sampleB);
+            const val = (1 - frac) * valA + frac * valB;
+
+            // Apply specific visual scale
+            if (type === 'raw' || type === 'filtered' || type === 'enhanced' || type === 'geobody') {
+              // Red-White-Blue seismic scale
+              const norm = Math.max(-1, Math.min(1, val / 15000));
+              if (norm > 0) {
+                color = `rgb(255, ${Math.round(255 * (1 - norm))}, ${Math.round(255 * (1 - norm))})`;
+              } else {
+                const absN = Math.abs(norm);
+                color = `rgb(${Math.round(255 * (1 - absN))}, ${Math.round(255 * (1 - absN))}, 255)`;
+              }
+            } else if (type === 'terrace') {
+              if (terraceAttr === 'amplitude') {
+                // Square seismic wiggles
+                const norm = Math.max(-1, Math.min(1, val / 15000));
+                if (norm > 0) {
+                  color = `rgb(255, ${Math.round(255 * (1 - norm))}, ${Math.round(255 * (1 - norm))})`;
+                } else {
+                  const absN = Math.abs(norm);
+                  color = `rgb(${Math.round(255 * (1 - absN))}, ${Math.round(255 * (1 - absN))}, 255)`;
+                }
+              } else if (terraceAttr === 'thickness') {
+                // Hot colormap: Black (low) to Orange/White (high thickness)
+                const norm = Math.max(0, Math.min(1, val / 45.0)); // max thickness ~45 samples
+                color = `rgb(${Math.round(100 + 155 * norm)}, ${Math.round(70 * norm)}, ${Math.round(20 * norm)})`;
+              } else if (terraceAttr === 'arc_length') {
+                // Arc length: Jet-like colormap
+                const norm = Math.max(-1, Math.min(1, val * 3.0));
+                if (norm > 0) {
+                  color = `rgb(${Math.round(255 * norm)}, ${Math.round(255 * (1 - norm))}, 50)`;
+                } else {
+                  color = `rgb(50, ${Math.round(255 * (1 - Math.abs(norm)))}, ${Math.round(255 * Math.abs(norm))})`;
+                }
+              } else {
+                // Event labeling: Staircase color band
+                const norm = (val % 8) / 8.0;
+                color = `hsl(${norm * 360}, 65%, 40%)`;
+              }
+            } else if (type === 'doublet') {
+              // Doublet: Yellow/Green (Low) to Red (High doublet response)
+              const norm = Math.max(0, Math.min(1, val * 10.0));
+              color = `rgb(${Math.round(150 + 105 * norm)}, ${Math.round(200 * (1 - norm))}, ${Math.round(50 * (1 - norm))})`;
+            } else if (type === 'neg_ifreq') {
+              // Highlight negative values in green/yellow, zero/positive in grey
+              if (val < 0) {
+                const norm = Math.min(1.0, Math.abs(val) / 45.0);
+                color = `rgb(${Math.round(220 * norm)}, 255, ${Math.round(30 * (1 - norm))})`; // Green to Yellow
+              } else {
+                color = '#1e293b';
+              }
+            } else if (type === 'bedform' || type === 'combined') {
+              // Bedform cosine: sharp lines along max/min phase (independent of amp)
+              const norm = Math.max(-1, Math.min(1, val));
+              if (norm > 0.8) {
+                color = 'rgb(239, 68, 68)'; // Peaks = Red lineaments
+              } else if (norm < -0.8) {
+                color = 'rgb(59, 130, 246)'; // Troughs = Blue lineaments
+              } else {
+                color = 'rgba(15, 23, 42, 0.4)'; // transparent grey background
+              }
+            }
+
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, 1, 1);
           }
         }
-        convolved[i] = val;
       }
-      tracesData.push(convolved);
 
-      // Measure Peak Amplitude (Tuning curve)
-      // Find the absolute maximum amplitude within the reservoir interval
-      let maxVal = 0.0;
-      for (let i = topTime - 10; i < Math.min(traceLength, botTime + 20); i++) {
-        if (Math.abs(convolved[i]) > maxVal) {
-          maxVal = Math.abs(convolved[i]);
+      // ── Pass 2: Overlays for geobodies, negative IF, or wiggles ──
+      for (let p = 0; p < nPanels; p++) {
+        const wellA = thinBedWellsData[arbLineWells[p]];
+        const wellB = thinBedWellsData[arbLineWells[p+1]];
+        if (!wellA || !wellB) continue;
+
+        const startX = offsetX + p * colsPerPanel;
+        const endX = offsetX + (p + 1) * colsPerPanel;
+
+        for (let x = startX; x < endX; x++) {
+          const frac = (x - startX) / colsPerPanel;
+          for (let y = offsetY; y < offsetY + plotH; y++) {
+            const fracY = (y - offsetY) / plotH;
+            const sIdx = Math.min(Math.floor(fracY * maxLen), wellA.samples.length - 1);
+            
+            const sampleA = wellA.samples[sIdx];
+            const sampleB = wellB.samples[sIdx];
+            
+            if (type === 'combined') {
+              // Overlay negative instantaneous frequency spikes in bright green
+              const valA = sampleA.neg_ifreq;
+              const valB = sampleB.neg_ifreq;
+              const val = (1 - frac) * valA + frac * valB;
+              if (val < 0) {
+                ctx.fillStyle = 'rgba(34, 197, 94, 0.7)'; // translucent green overlay
+                ctx.fillRect(x, y, 1, 1);
+              }
+            } else if (type === 'geobody') {
+              // Highlight connected doublet geobodies
+              const valA = sampleA.is_geobody;
+              const valB = sampleB.is_geobody;
+              const val = (1 - frac) * valA + frac * valB;
+              if (val > 0.5) {
+                ctx.fillStyle = 'rgba(239, 68, 68, 0.6)'; // Translucent Geobody Red
+                ctx.fillRect(x, y, 1, 1);
+              }
+            }
+          }
         }
       }
-      peakAmps.push(maxVal);
-    }
 
-    // Find Tuning Thickness (where peak amplitude is maximized)
-    let maxAmpIdx = 0;
-    let maxAmpVal = 0.0;
-    for (let i = 2; i < peakAmps.length; i++) { // Skip near-zero thickness artifact
-      if (peakAmps[i] > maxAmpVal) {
-        maxAmpVal = peakAmps[i];
-        maxAmpIdx = i;
-      }
-    }
-    const tuningThicknessMs = thicknesses[maxAmpIdx];
-    // Tuning thickness in meters: assuming sand velocity is 3000 m/s (1 ms TWT = 1.5 meters)
-    const tuningThicknessM = (tuningThicknessMs * 1.5).toFixed(1);
-
-    // ── DRAW WEDGE VARIABLE DENSITY CANVAS ──
-    wCtx.fillStyle = '#0f172a';
-    wCtx.fillRect(0, 0, W, H);
-
-    const padLeft = 45;
-    const padBottom = 30;
-    const padTop = 15;
-    const padRight = 15;
-    const plotW = W - padLeft - padRight;
-    const plotH = H - padTop - padBottom;
-    const traceW = plotW / nTraces;
-
-    // Paint Variable Density background
-    for (let x = 0; x < nTraces; x++) {
-      const trace = tracesData[x];
-      const startX = padLeft + x * traceW;
-      const endX = padLeft + (x + 1) * traceW;
-
-      for (let y = 0; y < plotH; y++) {
-        const sampleIdx = Math.floor((y / plotH) * traceLength);
-        const val = trace[Math.min(sampleIdx, traceLength - 1)];
-
-        // Red-White-Blue seismic scale
-        let color = '';
-        const norm = Math.max(-1.0, Math.min(1.0, val));
-        if (norm > 0) {
-          const r = 255;
-          const g = Math.round(255 * (1 - norm));
-          const b = Math.round(255 * (1 - norm));
-          color = `rgb(${r}, ${g}, ${b})`;
-        } else {
-          const absNorm = Math.abs(norm);
-          const r = Math.round(255 * (1 - absNorm));
-          const g = Math.round(255 * (1 - absNorm));
-          const b = 255;
-          color = `rgb(${r}, ${g}, ${b})`;
+      // ── Pass 3: Horizon highlights (Red Peak & Tensleep) ──
+      const drawHorizon = (yFrac, name, color) => {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (let x = offsetX; x < offsetX + plotW; x++) {
+          const frac = (x - offsetX) / plotW;
+          const dip = Math.sin(frac * Math.PI * 2) * 11 + Math.cos(frac * Math.PI * 4) * 4;
+          const y = offsetY + yFrac * plotH + dip;
+          if (x === offsetX) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
         }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 9.5px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(name, offsetX + plotW - 12, offsetY + yFrac * plotH - 6);
+        ctx.restore();
+      };
 
-        wCtx.fillStyle = color;
-        wCtx.fillRect(startX, padTop + y, Math.ceil(traceW), 1);
+      drawHorizon(0.42, "Red Peak", "rgba(251, 191, 36, 0.85)");
+      drawHorizon(0.68, "Tensleep", "rgba(168, 85, 247, 0.85)");
+
+      // ── Pass 4: Borehole Lines & Axes Ticks ──
+      ctx.fillStyle = '#64748b';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+
+      const firstWell = thinBedWellsData[arbLineWells[0]];
+      const tStart = firstWell.samples[0].time;
+      const tEnd = firstWell.samples[firstWell.samples.length - 1].time;
+
+      for (let t = Math.ceil(tStart / 50) * 50; t <= tEnd; t += 50) {
+        const frac = (t - tStart) / (tEnd - tStart);
+        const y = offsetY + frac * plotH;
+        ctx.beginPath();
+        ctx.moveTo(offsetX - 4, y);
+        ctx.lineTo(offsetX, y);
+        ctx.stroke();
+        ctx.fillText(`${t} ms`, offsetX - 8, y);
       }
+
+      arbLineWells.forEach((wName, idx) => {
+        const xPos = offsetX + (idx / nPanels) * plotW;
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.moveTo(xPos, offsetY);
+        ctx.lineTo(xPos, offsetY + plotH);
+        ctx.stroke();
+
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(wName, xPos, offsetY - 6);
+
+        ctx.fillStyle = '#475569';
+        ctx.fillText(`IL ${wellsConfig[wName].inline}`, xPos, offsetY + plotH + 12);
+        ctx.fillText(`XL ${wellsConfig[wName].crossline}`, xPos, offsetY + plotH + 22);
+      });
+    });
+
+  }, [slideIdx, arbLineWells, terraceMethod, terraceAttr]);
+
+  // --- Hover interaction handler ---
+  const handleMouseMove = (e, canvasRef, type) => {
+    if (!canvasRef.current || arbLineWells.length < 2) return;
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    
+    const offsetX = 55;
+    const rightMargin = 20;
+    const offsetY = 20;
+    const bottomOffsetY = 40;
+    
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    const clickX = (e.clientX - rect.left) * scaleX;
+    const clickY = (e.clientY - rect.top) * scaleY;
+    
+    const plotW = canvas.width - offsetX - rightMargin;
+    const plotH = canvas.height - offsetY - bottomOffsetY;
+    
+    if (clickX < offsetX || clickX > canvas.width - rightMargin || clickY < offsetY || clickY > canvas.height - bottomOffsetY) {
+      setHoveredData(null);
+      setHoveredGeobody(null);
+      return;
+    }
+    
+    const fracX = (clickX - offsetX) / plotW;
+    const fracY = (clickY - offsetY) / plotH;
+    
+    const nPanels = arbLineWells.length - 1;
+    const p = Math.min(nPanels - 1, Math.floor(fracX * nPanels));
+    const pFrac = (fracX - p / nPanels) * nPanels;
+    
+    const wellA = thinBedWellsData[arbLineWells[p]];
+    const wellB = thinBedWellsData[arbLineWells[p+1]];
+    if (!wellA || !wellB) return;
+    
+    const il = Math.round(wellA.inline + pFrac * (wellB.inline - wellA.inline));
+    const xl = Math.round(wellA.crossline + pFrac * (wellB.crossline - wellA.crossline));
+    
+    const tStart = wellA.samples[0].time;
+    const tEnd = wellA.samples[wellA.samples.length - 1].time;
+    const twt = tStart + fracY * (tEnd - tStart);
+    
+    const sampleIdx = Math.floor(fracY * wellA.samples.length);
+    const idx = Math.min(sampleIdx, wellA.samples.length - 1);
+    
+    const valA = wellA.samples[idx];
+    const valB = wellB.samples[idx];
+    
+    let displayVal = '';
+    let geobodyId = 0;
+    
+    const getInterpolatedValue = (key) => {
+      const vA = valA[key] || 0;
+      const vB = valB[key] || 0;
+      return (1 - pFrac) * vA + pFrac * vB;
+    };
+    
+    if (type === 'raw') {
+      displayVal = `Raw Amp: ${getInterpolatedValue('seismic_raw').toFixed(0)}`;
+    } else if (type === 'filtered') {
+      displayVal = `Filtered Amp: ${getInterpolatedValue('seismic_filtered').toFixed(0)}`;
+    } else if (type === 'difference') {
+      displayVal = `Difference (Noise): ${getInterpolatedValue('seismic_difference').toFixed(0)}`;
+    } else if (type === 'enhanced') {
+      displayVal = `Enhanced Amp: ${getInterpolatedValue('seismic_enhanced').toFixed(0)}`;
+    } else if (type === 'terrace') {
+      const suffix = terraceMethod === 'zero_crossing' ? 'zc' : 'ip';
+      const key = `terrace_${terraceAttr}_${suffix}`;
+      displayVal = `Terrace ${terraceAttr}: ${getInterpolatedValue(key).toFixed(1)}`;
+    } else if (type === 'doublet') {
+      displayVal = `Doublet: ${getInterpolatedValue('doublet').toFixed(3)}`;
+    } else if (type === 'neg_ifreq') {
+      displayVal = `Inst. Freq: ${getInterpolatedValue('neg_ifreq').toFixed(1)} Hz`;
+    } else if (type === 'bedform') {
+      displayVal = `Cosine Phase: ${getInterpolatedValue('bed_form_cos').toFixed(2)}`;
+    } else if (type === 'geobody') {
+      const idA = valA.geobody_id || 0;
+      const idB = valB.geobody_id || 0;
+      geobodyId = pFrac > 0.5 ? idB : idA;
+      displayVal = geobodyId > 0 ? `Intersecting Geobody #${geobodyId}` : 'No Geobody';
     }
 
-    // Overlay Wiggle curves (every 4 traces)
-    wCtx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-    wCtx.lineWidth = 0.8;
-    for (let x = 2; x < nTraces; x += 4) {
-      const trace = tracesData[x];
-      const centerX = padLeft + x * traceW + traceW / 2;
+    setHoveredData({ il, xl, twt, valueText: displayVal });
+    
+    if (geobodyId > 0) {
+      const meta = geobodiesMetadata.find(g => g.id === geobodyId);
+      if (meta) setHoveredGeobody(meta);
+    } else {
+      setHoveredGeobody(null);
+    }
+  };
 
-      wCtx.beginPath();
-      for (let y = 0; y < plotH; y++) {
-        const sampleIdx = Math.floor((y / plotH) * traceLength);
-        const val = trace[Math.min(sampleIdx, traceLength - 1)];
-        const dx = val * (traceW * 2.5); // scale wiggle deviation
-
-        if (y === 0) wCtx.moveTo(centerX + dx, padTop);
-        else wCtx.lineTo(centerX + dx, padTop + y);
+  const toggleWellInPath = (wName) => {
+    if (arbLineWells.includes(wName)) {
+      if (arbLineWells.length > 2) {
+        setArbLineWells(arbLineWells.filter(w => w !== wName));
       }
-      wCtx.stroke();
+    } else {
+      setArbLineWells([...arbLineWells, wName]);
     }
+  };
 
-    // Draw Top Horizon (Flat)
-    wCtx.strokeStyle = '#ffffff';
-    wCtx.setLineDash([3, 3]);
-    wCtx.lineWidth = 1.5;
-    wCtx.beginPath();
-    wCtx.moveTo(padLeft, padTop + (topTime / traceLength) * plotH);
-    wCtx.lineTo(W - padRight, padTop + (topTime / traceLength) * plotH);
-    wCtx.stroke();
+  // --- Rendering UI layouts per slide step ---
+  const renderSlideContent = () => {
+    const stepId = slides[slideIdx].id;
 
-    // Draw Bottom Horizon (Dipping)
-    wCtx.beginPath();
-    wCtx.moveTo(padLeft, padTop + (topTime / traceLength) * plotH);
-    for (let x = 0; x < nTraces; x++) {
-      const thickness = thicknesses[x];
-      const botY = padTop + ((topTime + thickness) / traceLength) * plotH;
-      const xPos = padLeft + x * traceW + traceW / 2;
-      if (x === 0) wCtx.moveTo(xPos, botY);
-      else wCtx.lineTo(xPos, botY);
-    }
-    wCtx.stroke();
-    wCtx.setLineDash([]);
-
-    // Draw Horizon text labels
-    wCtx.fillStyle = '#ffffff';
-    wCtx.font = 'italic 10px sans-serif';
-    wCtx.fillText("Top Sand", padLeft + 10, padTop + (topTime / traceLength) * plotH - 5);
-    wCtx.fillText("Base Sand (Dipping)", W - padRight - 110, padTop + ((topTime + thicknesses[nTraces - 1]) / traceLength) * plotH + 14);
-
-    // Draw Axes Frame
-    wCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    wCtx.lineWidth = 1;
-    wCtx.strokeRect(padLeft, padTop, plotW, plotH);
-
-    // X-Axis (Thickness in meters)
-    wCtx.fillStyle = '#94a3b8';
-    wCtx.font = '10px sans-serif';
-    wCtx.textAlign = 'center';
-    for (let x = 0; x <= nTraces; x += 15) {
-      const frac = x / nTraces;
-      const xPos = padLeft + frac * plotW;
-      const meters = (frac * 45 * 1.5).toFixed(0); // 1 ms = 1.5m
-      wCtx.beginPath();
-      wCtx.moveTo(xPos, padTop + plotH);
-      wCtx.lineTo(xPos, padTop + plotH + 4);
-      wCtx.stroke();
-      wCtx.fillText(`${meters}m`, xPos, padTop + plotH + 14);
-    }
-    wCtx.fillText("Wedge Layer Thickness (meters)", padLeft + plotW / 2, H - 4);
-
-    // Y-Axis (Two-Way Time in ms)
-    wCtx.textAlign = 'right';
-    wCtx.textBaseline = 'middle';
-    for (let t = 0; t <= traceLength; t += 30) {
-      const yPos = padTop + (t / traceLength) * plotH;
-      wCtx.beginPath();
-      wCtx.moveTo(padLeft - 4, yPos);
-      wCtx.lineTo(padLeft, yPos);
-      wCtx.stroke();
-      wCtx.fillText(`${t} ms`, padLeft - 8, yPos);
-    }
-
-    // ── DRAW TUNING CURVE CANVAS ──
-    const tW = tCanvas.width;
-    const tH = tCanvas.height;
-    tCtx.fillStyle = '#0f172a';
-    tCtx.fillRect(0, 0, tW, tH);
-
-    const tPadL = 45;
-    const tPadB = 30;
-    const tPadT = 20;
-    const tPadR = 15;
-    const tPlotW = tW - tPadL - tPadR;
-    const tPlotH = tH - tPadT - tPadB;
-
-    // Draw Gridlines
-    tCtx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-    tCtx.lineWidth = 1;
-    for (let val = 0.2; val <= 1.4; val += 0.2) {
-      const yVal = tPadT + tPlotH * (1.0 - (val / 1.5));
-      tCtx.beginPath();
-      tCtx.moveTo(tPadL, yVal);
-      tCtx.lineTo(tW - tPadR, yVal);
-      tCtx.stroke();
-    }
-
-    // Plot peak amplitudes
-    tCtx.strokeStyle = 'var(--accent-red)';
-    tCtx.lineWidth = 2.0;
-    tCtx.beginPath();
-    for (let x = 0; x < nTraces; x++) {
-      const thick = thicknesses[x] * 1.5; // meters
-      const amp = peakAmps[x];
-      // Map x to plot width (thickness max: 45*1.5 = 67.5m)
-      const xPos = tPadL + (thick / 67.5) * tPlotW;
-      const yPos = tPadT + tPlotH * (1.0 - (amp / 1.6)); // max amp around 1.6
-      if (x === 0) tCtx.moveTo(xPos, yPos);
-      else tCtx.lineTo(xPos, yPos);
-    }
-    tCtx.stroke();
-
-    // Highlight tuning point
-    const tuneX = tPadL + ((tuningThicknessMs * 1.5) / 67.5) * tPlotW;
-    const tuneY = tPadT + tPlotH * (1.0 - (maxAmpVal / 1.6));
-    tCtx.fillStyle = 'var(--accent-gold)';
-    tCtx.beginPath();
-    tCtx.arc(tuneX, tuneY, 5, 0, 2 * Math.PI);
-    tCtx.fill();
-    tCtx.strokeStyle = '#ffffff';
-    tCtx.lineWidth = 1.5;
-    tCtx.stroke();
-
-    // Tuning point label
-    tCtx.fillStyle = '#ffffff';
-    tCtx.font = 'bold 9.5px sans-serif';
-    tCtx.textAlign = 'left';
-    tCtx.fillText(`Tuning Limit: ~${tuningThicknessM}m (${tuningThicknessMs.toFixed(1)} ms)`, tuneX + 8, tuneY - 4);
-
-    // Axes lines
-    tCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    tCtx.strokeRect(tPadL, tPadT, tPlotW, tPlotH);
-
-    // X-Ticks
-    tCtx.fillStyle = '#94a3b8';
-    tCtx.font = '9px sans-serif';
-    tCtx.textAlign = 'center';
-    tCtx.textBaseline = 'top';
-    for (let m = 0; m <= 60; m += 15) {
-      const xPos = tPadL + (m / 67.5) * tPlotW;
-      tCtx.beginPath();
-      tCtx.moveTo(xPos, tPadT + tPlotH);
-      tCtx.lineTo(xPos, tPadT + tPlotH + 4);
-      tCtx.stroke();
-      tCtx.fillText(`${m}m`, xPos, tPadT + tPlotH + 6);
-    }
-    tCtx.fillText("Thickness (meters)", tPadL + tPlotW / 2, tH - 4);
-
-    // Y-Ticks
-    tCtx.textAlign = 'right';
-    tCtx.textBaseline = 'middle';
-    for (let val = 0.0; val <= 1.5; val += 0.5) {
-      const yPos = tPadT + tPlotH * (1.0 - (val / 1.6));
-      tCtx.beginPath();
-      tCtx.moveTo(tPadL - 4, yPos);
-      tCtx.lineTo(tPadL, yPos);
-      tCtx.stroke();
-      tCtx.fillText(val.toFixed(1), tPadL - 8, yPos);
-    }
-
-    tCtx.save();
-    tCtx.translate(14, tPadT + tPlotH / 2);
-    tCtx.rotate(-Math.PI / 2);
-    tCtx.textAlign = 'center';
-    tCtx.fillText("Seismic Response Amplitude", 0, 0);
-    tCtx.restore();
-
-  }, [frequency, subTab]);
-
-  // ── PART 2: Render Multi-Track Well Log Viewer ──
-  const renderWellLogs = () => {
-    const well = wellsData[selectedWell];
-    if (!well) return null;
-
-    // Filter samples that have actual logs (reservoir interval) to make the plot clean and high-resolution
-    const reservoirSamples = well.samples.filter(s => s["time"] >= 2086.0 && s["time"] <= 2154.0);
-    if (reservoirSamples.length === 0) {
+    if (stepId === 'intro') {
       return (
-        <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px' }}>
-          No logged reservoir interval samples available for Well {selectedWell}.
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
+            <h4 className="canvas-title">Raw Seismic Cross-Section Profile</h4>
+            <canvas
+              ref={canvasRefs.slide1}
+              width={650}
+              height={400}
+              onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide1, 'raw')}
+              onMouseLeave={() => setHoveredData(null)}
+              className="slide-canvas-main"
+            />
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Methodology Introduction</h3>
+            <p>We implement the 3D thin-bed resolution workflow outlined in <strong>Henning & Paton (2011)</strong>.</p>
+            <div className="info-badge">
+              <Info size={16} />
+              <span><strong>Data Source:</strong> Real Teapot Dome Seismic & Wells only.</span>
+            </div>
+            <p className="description">
+              In raw seismic sections, resolution is bounded by the wave's dominant wavelength (lambda/4 approx 30m). Thin sands and bed boundaries below tuning thickness interfere, creating doublets or unresolved reflections.
+            </p>
+            <div className="legend-box">
+              <span className="legend-title">Seismic Amplitude</span>
+              <div className="color-bar rwb-bar"></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px', marginTop: '3px' }}>
+                <span>Trough (Blue)</span>
+                <span>Peak (Red)</span>
+              </div>
+            </div>
+          </div>
         </div>
       );
     }
 
-    // Get time bounds
-    const times = reservoirSamples.map(s => s.time);
-    const tMin = Math.min(...times);
-    const tMax = Math.max(...times);
-    const tRange = tMax - tMin || 1;
-
-    // Dimensions of SVG tracks
-    const trackW = 160;
-    const trackH = 420;
-    const padding = 10;
-    const plotW = trackW - padding * 2;
-    const plotH = trackH - padding * 3 - 20;
-
-    // Normalize Y time to coordinate
-    const getY = (timeVal) => padding + 20 + ((timeVal - tMin) / tRange) * plotH;
-
-    // Helper to generate path for a property
-    const getPath = (propName, minVal, maxVal, clampMin = null, clampMax = null) => {
-      const pts = [];
-      const range = maxVal - minVal || 1;
-      
-      reservoirSamples.forEach(s => {
-        let val = s[propName];
-        if (val === null || val === undefined) return;
-        if (clampMin !== null) val = Math.max(clampMin, val);
-        if (clampMax !== null) val = Math.min(clampMax, val);
-        
-        const norm = (val - minVal) / range;
-        const x = padding + norm * plotW;
-        const y = getY(s.time);
-        pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-      });
-
-      return pts.length > 0 ? `M ${pts.join(' L ')}` : '';
-    };
-
-    // Draw Y-axis ticks on the left of Track 1
-    const renderYAxisTicks = () => {
-      const ticks = [];
-      const step = 10;
-      const startT = Math.ceil(tMin / step) * step;
-      for (let t = startT; t <= tMax; t += step) {
-        ticks.push(
-          <g key={t}>
-            <line x1={0} y1={getY(t)} x2={6} y2={getY(t)} stroke="rgba(255,255,255,0.4)" strokeWidth={1} />
-            <text x={-6} y={getY(t) + 3} fill="#94a3b8" fontSize={9.5} textAnchor="end">{t} ms</text>
-            <line x1={8} y1={getY(t)} x2={trackW} y2={getY(t)} stroke="rgba(255,255,255,0.05)" strokeWidth={1} strokeDasharray="3 3" />
-          </g>
-        );
-      }
-      return ticks;
-    };
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '13.5px', color: 'var(--text-secondary)' }}>Select Target Well:</span>
-            <select
-              value={selectedWell}
-              onChange={(e) => setSelectedWell(e.target.value)}
-              style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-dark)', color: '#fff', fontSize: '13px' }}
-            >
-              {Object.keys(wellsData).map(wName => (
-                <option key={wName} value={wName}>{wName} {wName === 'Z-04' ? '(Blind)' : ''}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-            Logged Reservoir interval: <strong>{tMin.toFixed(0)} - {tMax.toFixed(0)} ms TWT</strong>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
-          {/* TRACK 1: RAW SEISMIC AMPLITUDE */}
-          <div className="glass-card" style={{ padding: '12px', width: `${trackW + 40}px` }}>
-            <h4 style={{ margin: '0 0 6px 0', fontSize: '12.5px', color: 'var(--text-primary)', textAlign: 'center' }}>Track 1: Raw Seismic</h4>
-            <div style={{ display: 'flex', fontSize: '9px', justifyContent: 'space-between', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', marginBottom: '8px' }}>
-              <span>-15k</span>
-              <span>Amplitude</span>
-              <span>+15k</span>
+    if (stepId === 'sof') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: Raw Seismic Section</h4>
+              <canvas
+                ref={canvasRefs.slide2_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide2_left, 'raw')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
             </div>
-            <svg width={trackW + 30} height={trackH} style={{ background: '#090d16', borderRadius: '4px' }}>
-              <g transform="translate(30, 0)">
-                {renderYAxisTicks()}
-                <line x1={padding} y1={padding + 20} x2={padding} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                <line x1={padding + plotW} y1={padding + 20} x2={padding + plotW} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                <path d={getPath('seismic_amp', -15000, 15000)} fill="none" stroke="var(--accent-blue)" strokeWidth={1.5} />
-              </g>
-            </svg>
-          </div>
-
-          {/* TRACK 2: ENVELOPE & SWEETNESS */}
-          <div className="glass-card" style={{ padding: '12px', width: `${trackW}px` }}>
-            <h4 style={{ margin: '0 0 6px 0', fontSize: '12.5px', color: 'var(--text-primary)', textAlign: 'center' }}>Track 2: Attributes</h4>
-            <div style={{ display: 'flex', fontSize: '9px', justifyContent: 'space-between', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', marginBottom: '8px' }}>
-              <span style={{ color: 'var(--accent-pink)' }}>Env</span>
-              <span>Attributes</span>
-              <span style={{ color: 'var(--accent-cyan)' }}>Sweetness</span>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Structurally-Oriented Filter (SOF)</h4>
+              <canvas
+                ref={canvasRefs.slide2_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide2_right, 'filtered')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
             </div>
-            <svg width={trackW} height={trackH} style={{ background: '#090d16', borderRadius: '4px' }}>
-              <g>
-                <line x1={padding} y1={padding + 20} x2={padding} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                <line x1={padding + plotW} y1={padding + 20} x2={padding + plotW} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                
-                {/* Envelope path */}
-                <path d={getPath('seismic_amp', 0, 18000)} fill="none" stroke="var(--accent-pink)" strokeWidth={1.2} />
-                
-                {/* Sweetness path: envelope / sqrt(ifreq) proxy */}
-                {(() => {
-                  const pts = [];
-                  reservoirSamples.forEach(s => {
-                    const env = s.seismic_amp ? Math.abs(s.seismic_amp) : 0;
-                    // Mock instantaneous frequency or relative changes from trace
-                    const sweetVal = env / 40.0; // scaled wrapper
-                    const norm = Math.max(0.0, Math.min(1.0, sweetVal / 250.0));
-                    const x = padding + norm * plotW;
-                    const y = getY(s.time);
-                    pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-                  });
-                  const pathD = pts.length > 0 ? `M ${pts.join(' L ')}` : '';
-                  return <path d={pathD} fill="none" stroke="var(--accent-cyan)" strokeWidth={1.5} strokeDasharray="3 2" />;
-                })()}
-              </g>
-            </svg>
           </div>
-
-          {/* TRACK 3: ACOUSTIC IMPEDANCE */}
-          <div className="glass-card" style={{ padding: '12px', width: `${trackW}px` }}>
-            <h4 style={{ margin: '0 0 6px 0', fontSize: '12.5px', color: 'var(--text-primary)', textAlign: 'center' }}>Track 3: Inversion</h4>
-            <div style={{ display: 'flex', fontSize: '9px', justifyContent: 'space-between', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', marginBottom: '8px' }}>
-              <span>Low AI</span>
-              <span>Impedance</span>
-              <span>High AI</span>
-            </div>
-            <svg width={trackW} height={trackH} style={{ background: '#090d16', borderRadius: '4px' }}>
-              <g>
-                <line x1={padding} y1={padding + 20} x2={padding} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                <line x1={padding + plotW} y1={padding + 20} x2={padding + plotW} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                
-                {/* Acoustic Impedance predictions */}
-                <path d={getPath('DT (Pred)', 100, 60)} fill="none" stroke="var(--accent-gold)" strokeWidth={1.5} />
-              </g>
-            </svg>
-          </div>
-
-          {/* TRACK 4: THIN-BED RESOLUTION (ACTUAL VS ML GR) */}
-          <div className="glass-card" style={{ padding: '12px', width: `${trackW + 50}px` }}>
-            <h4 style={{ margin: '0 0 6px 0', fontSize: '12.5px', color: 'var(--text-primary)', textAlign: 'center' }}>Track 4: Thin-Bed GR</h4>
-            <div style={{ display: 'flex', fontSize: '9px', justifyContent: 'space-between', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', marginBottom: '8px' }}>
-              <span>Sand</span>
-              <span>Gamma Ray (GR)</span>
-              <span>Shale</span>
-            </div>
-            <svg width={trackW + 50} height={trackH} style={{ background: '#090d16', borderRadius: '4px' }}>
-              <g>
-                <line x1={padding} y1={padding + 20} x2={padding} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                <line x1={padding + plotW} y1={padding + 20} x2={padding + plotW} y2={padding + 20 + plotH} stroke="rgba(255,255,255,0.2)" />
-                
-                {/* 1. Actual GR Log (Black line) */}
-                <path d={getPath('GR (Act)', 30, 140)} fill="none" stroke="#fff" strokeWidth={1.8} />
-                
-                {/* 2. Predicted Raw GR (Smooth Blue line) */}
-                <path d={getPath('GR (Pred Raw)', 30, 140)} fill="none" stroke="var(--accent-blue)" strokeWidth={1.2} strokeDasharray="3 3" />
-                
-                {/* 3. Predicted Calibrated GR (Upgraded Red line resolving thin beds) */}
-                <path d={getPath('GR (Pred)', 30, 140)} fill="none" stroke="var(--accent-red)" strokeWidth={1.5} />
-              </g>
-            </svg>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px', fontSize: '9.5px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ width: '10px', height: '3px', backgroundColor: '#fff' }}></span> Actual GR Well Log
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ width: '10px', height: '3px', backgroundColor: 'var(--accent-blue)', strokeDasharray: '2 2' }}></span> Baseline ML (Raw Seismic)
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ width: '10px', height: '3px', backgroundColor: 'var(--accent-red)' }}></span> Upgraded ML (Sweetness + Al)
-              </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 2: Structurally-Oriented Filter</h3>
+            <p className="description">
+              We construct a <strong>3D Gradient Structure Tensor (GST)</strong> across the volume to extract the true 3D spatial dip vectors v = (vx, vy, vz) at each voxel.
+            </p>
+            <p className="description">
+              Amplitudes are smoothed in a 3 x 3 neighborhood along the structural dip planes. This cancels random/coherent noise (like footprints) while preserving reflector edges.
+            </p>
+            <div className="formula-box">
+              T_smooth = Smooth(grad(I) * grad(I)^T)
             </div>
           </div>
         </div>
-      </div>
-    );
+      );
+    }
+
+    if (stepId === 'spectrum') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column' }}>
+            <h4 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#c7d2fe', letterSpacing: '0.05em' }}>
+              Trace Amplitude Frequency Spectrum (Welch PSD)
+            </h4>
+            <div style={{ flex: 1, minHeight: '300px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={frequencySpectrum} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="frequency" label={{ value: 'Frequency (Hz)', position: 'insideBottom', offset: -5, fill: '#64748b' }} stroke="#475569" />
+                  <YAxis label={{ value: 'Normalized Power', angle: -90, position: 'insideLeft', fill: '#64748b' }} stroke="#475569" />
+                  <RechartsTooltip contentStyle={{ backgroundColor: '#090d16', borderColor: 'rgba(99,102,241,0.35)', color: '#fff' }} />
+                  <RechartsLegend />
+                  <Line type="monotone" dataKey="powerBefore" name="Before Enhancement (SOF)" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="powerAfter" name="After Spectral Enhancement" stroke="#ef4444" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 3: Power Spectrum Tuning</h3>
+            <p className="description">
+              Because velocity is a fixed material property, the only way to improve vertical resolution is to expand the bandwidth and boost higher frequencies.
+            </p>
+            <p className="description">
+              The plot displays the average trace power spectrum. Spectral enhancement boosts frequencies between 30Hz and 55Hz, flattening the bandwidth to flatten/whiten the spectrum.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (stepId === 'enhancement') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: SOF Noise-Filtered</h4>
+              <canvas
+                ref={canvasRefs.slide4_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide4_left, 'filtered')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Spectrally Enhanced Section</h4>
+              <canvas
+                ref={canvasRefs.slide4_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide4_right, 'enhanced')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 4: Spectral Enhancement</h3>
+            <p className="description">
+              Comparing Panel A (noise-filtered) and Panel B (spectrally enhanced).
+            </p>
+            <p className="description">
+              Notice how the thick reflectors decompose into sharp, distinct bed boundaries. Sub-seismic pinch-outs and thin sand beds become visible.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (stepId === 'terrace') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: Spectrally Enhanced</h4>
+              <canvas
+                ref={canvasRefs.slide5_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide5_left, 'enhanced')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Terrace Blocking Attribute</h4>
+              <canvas
+                ref={canvasRefs.slide5_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide5_right, 'terrace')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 5: Terrace Attributes</h3>
+            
+            <div className="control-group">
+              <label>Delineation Boundary:</label>
+              <select value={terraceMethod} onChange={(e) => setTerraceMethod(e.target.value)}>
+                <option value="zero_crossing">Zero Crossings</option>
+                <option value="inflection_point">Points of Inflection</option>
+              </select>
+            </div>
+
+            <div className="control-group">
+              <label>Terrace Variant:</label>
+              <select value={terraceAttr} onChange={(e) => setTerraceAttr(e.target.value)}>
+                <option value="amplitude">Terrace Amplitude</option>
+                <option value="thickness">Terrace Thickness</option>
+                <option value="arc_length">Terrace Arc Length</option>
+                <option value="event">Event Labeling</option>
+              </select>
+            </div>
+
+            <p className="description" style={{ marginTop: '10px' }}>
+              Blocks trace waveforms into discrete square intervals between zero-crossings or inflection points. This allows clean auto-tracking of thin reflectors without bleeding.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (stepId === 'doublet') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: Enhanced Seismic</h4>
+              <canvas
+                ref={canvasRefs.slide6_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide6_left, 'enhanced')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Doublet Attribute</h4>
+              <canvas
+                ref={canvasRefs.slide6_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide6_right, 'doublet')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 6: Doublet Attribute</h3>
+            <p className="description">
+              Identifies closely spaced thin-bed reflections that have not resolved.
+            </p>
+            <p className="description">
+              Calculates the sample-by-sample difference between Zero Crossing and Inflection Point arc lengths. High response values (red bands) highlight unresolved doublets.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (stepId === 'neg_ifreq') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: Enhanced Seismic</h4>
+              <canvas
+                ref={canvasRefs.slide7_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide7_left, 'enhanced')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Negative Instantaneous Freq</h4>
+              <canvas
+                ref={canvasRefs.slide7_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide7_right, 'neg_ifreq')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 7: Negative Instantaneous Frequency</h3>
+            <p className="description">
+              Instantaneous frequency is calculated as the time derivative of instantaneous phase 1 / (2pi) * dtheta/dt using Hilbert transforms.
+            </p>
+            <p className="description">
+              Anomalous negative spikes (yellow/green lines) occur due to thin-bed destructive wave interference, outlining sub-seismic sand bodies.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (stepId === 'bedform') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: Enhanced Seismic</h4>
+              <canvas
+                ref={canvasRefs.slide8_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide8_left, 'enhanced')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Bed Form skeleton</h4>
+              <canvas
+                ref={canvasRefs.slide8_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide8_right, 'bedform')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 8: Skeletonized Bed Form</h3>
+            <p className="description">
+              Extracts lineaments along the maximum phase (cos(phase) &gt; 0.8, Red) and minimum phase (cos(phase) &lt; -0.8, Blue).
+            </p>
+            <p className="description">
+              This amplitude-independent skeletonization isolates stratigraphic boundaries and clinoforms, revealing layer geometry without frequency bias.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (stepId === 'combined') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: Enhanced Seismic</h4>
+              <canvas
+                ref={canvasRefs.slide9_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide9_left, 'enhanced')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Bed Form + Neg Inst Freq</h4>
+              <canvas
+                ref={canvasRefs.slide9_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide9_right, 'combined')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 9: Combined Bed Form & Neg Freq</h3>
+            <p className="description">
+              We overlay the anomalous negative frequency events (green translucent bands) on top of the bed form phase skeleton.
+            </p>
+            <p className="description">
+              This multi-attribute fusion enhances stratigraphic tracking in low-amplitude zones where reflectors otherwise pinch out visually.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (stepId === 'geobody') {
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '16px', height: '100%' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel A: Enhanced Seismic</h4>
+              <canvas
+                ref={canvasRefs.slide10_left}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide10_left, 'enhanced')}
+                onMouseLeave={() => setHoveredData(null)}
+                className="slide-canvas"
+              />
+            </div>
+            <div className="canvas-wrapper">
+              <h4 className="canvas-title">Panel B: Extracted Doublet Geobodies</h4>
+              <canvas
+                ref={canvasRefs.slide10_right}
+                width={360}
+                height={400}
+                onMouseMove={(e) => handleMouseMove(e, canvasRefs.slide10_right, 'geobody')}
+                onMouseLeave={() => { setHoveredData(null); setHoveredGeobody(null); }}
+                className="slide-canvas"
+              />
+            </div>
+          </div>
+          <div className="glass-card panel-sidebar">
+            <h3>Step 10: 3D Geobodies</h3>
+            <p className="description">
+              3D connected components segmented from the doublet volume. Red overlays indicate active geobody intersections along the section profile.
+            </p>
+            
+            {hoveredGeobody ? (
+              <div className="geobody-card">
+                <h4>{hoveredGeobody.name}</h4>
+                <div className="stat-row">
+                  <span>Voxel Count:</span>
+                  <strong>{hoveredGeobody.voxelCount}</strong>
+                </div>
+                <div className="stat-row">
+                  <span>3D Volume:</span>
+                  <strong>{hoveredGeobody.volumeM3.toLocaleString()} m³</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Depth (TWT):</span>
+                  <strong>{hoveredGeobody.depthRangeTWT[0].toFixed(0)} - {hoveredGeobody.depthRangeTWT[1].toFixed(0)} ms</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Avg Porosity:</span>
+                  <strong>{(hoveredGeobody.avgPorosity * 100).toFixed(1)}%</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Avg Saturation:</span>
+                  <strong>{(hoveredGeobody.avgSaturation * 100).toFixed(1)}%</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Ties Wells:</span>
+                  <strong>{hoveredGeobody.intersectedWells.join(', ') || 'None'}</strong>
+                </div>
+              </div>
+            ) : (
+              <div className="geobody-card empty">
+                <p>Hover over the red shaded geobodies on Panel B to load true 3D physical metrics...</p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
   };
 
   return (
-    <div className="slide">
-      <div className="slide-title-area" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h2>Sub-Seismic Thin Bed Resolution Workbench</h2>
-          <p className="slide-subtitle">Analyze, simulate, and resolve thin sandstone reservoir beds that sit below traditional seismic tuning limits.</p>
+    <div className="thinbed-workflow-container">
+      
+      {/* --- WORKSTATION SLIDEPATH BAR --- */}
+      <div className="workflow-navigator-header">
+        <button className="nav-btn" onClick={handlePrev} disabled={slideIdx === 0}>
+          <ChevronLeft size={16} /> Prev Step
+        </button>
+        
+        <div className="step-dots-container">
+          {slides.map((s, idx) => (
+            <button
+              key={s.id}
+              onClick={() => setSlideIdx(idx)}
+              className={`step-dot-btn ${slideIdx === idx ? 'active' : ''}`}
+              title={s.title}
+            >
+              {idx + 1}
+            </button>
+          ))}
         </div>
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <button
-            onClick={() => setSubTab('wedge')}
-            style={{
-              padding: '6px 14px',
-              borderRadius: '8px',
-              border: `1.5px solid ${subTab === 'wedge' ? 'var(--accent-blue)' : 'var(--border-color)'}`,
-              background: subTab === 'wedge' ? 'rgba(37,99,235,0.08)' : 'transparent',
-              color: subTab === 'wedge' ? 'var(--accent-blue)' : 'var(--text-secondary)',
-              fontWeight: subTab === 'wedge' ? '600' : '400',
-              fontSize: '12.5px',
-              cursor: 'pointer'
-            }}
-          >
-            1. Wedge Modeling Simulator
-          </button>
-          <button
-            onClick={() => setSubTab('logs')}
-            style={{
-              padding: '6px 14px',
-              borderRadius: '8px',
-              border: `1.5px solid ${subTab === 'logs' ? 'var(--accent-blue)' : 'var(--border-color)'}`,
-              background: subTab === 'logs' ? 'rgba(37,99,235,0.08)' : 'transparent',
-              color: subTab === 'logs' ? 'var(--accent-blue)' : 'var(--text-secondary)',
-              fontWeight: subTab === 'logs' ? '600' : '400',
-              fontSize: '12.5px',
-              cursor: 'pointer'
-            }}
-          >
-            2. Multi-Attribute Well QC
-          </button>
+
+        <button className="nav-btn" onClick={handleNext} disabled={slideIdx === slides.length - 1}>
+          Next Step <ChevronRight size={16} />
+        </button>
+      </div>
+
+      {/* --- PANEL TITLE --- */}
+      <div className="workflow-title-bar">
+        <h2>{slides[slideIdx].title}</h2>
+        <span className="slide-progress">STAGE {slideIdx + 1} OF 10</span>
+      </div>
+
+      {/* --- ACTIVE SECTION CONTROL --- */}
+      <div className="well-path-controls-bar">
+        <span style={{ fontSize: '10.5px', color: '#475569', fontWeight: 700 }}>SELECT PATH:</span>
+        {Object.keys(thinBedWellsData).map(wName => {
+          const selected = arbLineWells.includes(wName);
+          const isBlind = wName === 'Z-04';
+          return (
+            <button
+              key={wName}
+              onClick={() => toggleWellInPath(wName)}
+              className={`well-toggle-btn ${selected ? 'active' : ''}`}
+            >
+              {wName}{isBlind ? ' (Blind)' : ''}
+            </button>
+          );
+        })}
+        <div style={{ marginLeft: 'auto', fontSize: '11px', color: '#94a3b8' }}>
+          Active Section: <strong>{arbLineWells.join(' ➔ ')}</strong>
         </div>
       </div>
 
-      {subTab === 'wedge' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-          {/* Left panel: Wedge canvas */}
-          <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Layers size={18} className="card-icon" style={{ color: 'var(--accent-gold)' }} />
-                <h3 style={{ margin: 0 }}>Widess Wedge Seismic Model</h3>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                <span>Frequency: <strong>{frequency} Hz</strong></span>
-                <input
-                  type="range"
-                  min="15"
-                  max="60"
-                  value={frequency}
-                  onChange={(e) => setFrequency(parseInt(e.target.value))}
-                  style={{ width: '100px', cursor: 'ew-resize' }}
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', background: '#090d16', borderRadius: '6px', padding: '10px' }}>
-              <canvas ref={wedgeCanvasRef} width={450} height={320} style={{ display: 'block', maxWidth: '100%' }} />
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontStyle: 'italic', display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
-              <Info size={14} style={{ flexShrink: 0, marginTop: '2px', color: 'var(--accent-blue)' }} />
-              <span>
-                <strong>Widess wedge theory:</strong> Adjust the wavelet frequency slider. Higher frequencies compress the tuning window, allowing you to resolve thinner beds before peak interference occurs.
-              </span>
-            </div>
-          </div>
+      {/* --- INTERACTIVE CANVAS WORKSPACE --- */}
+      <div className="workflow-main-layout">
+        {renderSlideContent()}
+      </div>
 
-          {/* Right panel: Tuning curve */}
-          <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Sliders size={18} className="card-icon" style={{ color: 'var(--accent-red)' }} />
-              <h3 style={{ margin: 0 }}>Tuning Curve Analysis</h3>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', background: '#090d16', borderRadius: '6px', padding: '10px' }}>
-              <canvas ref={tuningCanvasRef} width={450} height={320} style={{ display: 'block', maxWidth: '100%' }} />
-            </div>
-            <div style={{ fontSize: '11.5px', color: 'var(--text-primary)', background: 'var(--bg-dark)', padding: '10px', borderRadius: '6px', borderLeft: '3px solid var(--accent-gold)' }}>
-              <strong>Seismic Tuning limit:</strong> Below the tuning thickness (gold dot), seismic amplitude decays rapidly to zero. ML models utilize sweetness/frequency phase changes to bypass this limit and reconstruct thin-bed formations.
-            </div>
-          </div>
+      {/* --- FOOTER STATUS & LIVE READOUT --- */}
+      <div className="workflow-footer-bar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Activity size={14} color="#10b981" />
+          <span style={{ fontSize: '10px', color: '#64748b', fontWeight: 600 }}>STATUS:</span>
+          <span style={{ fontSize: '10px', color: '#10b981', fontWeight: 700 }}>REAL-TIME 3D VOLUMETRIC METRICS LIVE</span>
         </div>
-      )}
+        
+        {hoveredData ? (
+          <div className="live-coord-readout">
+            <span>Inline: <strong>{hoveredData.il}</strong></span>
+            <span>Crossline: <strong>{hoveredData.xl}</strong></span>
+            <span>TWT: <strong>{hoveredData.twt.toFixed(1)} ms</strong></span>
+            <span style={{ color: '#fbbf24' }}>{hoveredData.valueText}</span>
+          </div>
+        ) : (
+          <span style={{ fontSize: '10px', color: '#475569', fontStyle: 'italic' }}>
+            Hover cursor over canvas data points for live coordinate and attribute readouts...
+          </span>
+        )}
+      </div>
 
-      {subTab === 'logs' && renderWellLogs()}
     </div>
   );
 }

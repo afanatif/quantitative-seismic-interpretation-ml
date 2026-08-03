@@ -366,7 +366,7 @@ export default function GridPredictorTab({ gridData, wellsData }) {
                 {TARGETS.map(t=>{
                   const v = clicked[t];
                   if (v===undefined) return null;
-                  const isSweet = t==='SSI' && v>=0.035;
+                  const isSweet = t==='SSI' && v>=0.0045;
                   return (
                     <div key={t} style={{display:'flex',justifyContent:'space-between',fontSize:13,borderBottom:'1px solid var(--border-color)',paddingBottom:5}}>
                       <span style={{color:'var(--text-secondary)'}}>{LABELS[t]}</span>

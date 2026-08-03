@@ -1,0 +1,57 @@
+# ============================================================
+#  Quantitative Seismic Interpretation & ML Pipeline
+#  Complete Dependency File
+#  Python >= 3.9 | Node.js >= 18.x
+# ============================================================
+
+# ── Core Scientific Stack ────────────────────────────────────
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+scikit-learn>=1.2.0
+matplotlib>=3.7.0
+joblib>=1.2.0
+
+# ── Machine Learning ─────────────────────────────────────────
+xgboost>=1.7.0
+lightgbm>=3.3.0
+
+# ── Geoscience / Seismic / Well Log ──────────────────────────
+lasio>=0.30
+segyio>=1.9.0
+openpyxl>=3.1.0
+
+# ── GPU Acceleration (NVIDIA RTX / CUDA 12.x) ────────────────
+# cupy-cuda12x[ctk] installs CuPy + CUDA toolkit headers in one step.
+# Enables GPU kernels for CWT+SSWT GST spectral decomposition.
+# XGBoost & LightGBM use their own built-in CUDA — no CuPy needed for them.
+cupy-cuda12x[ctk]>=12.0.0
+
+# ============================================================
+#  FRONTEND (React + Vite Web Dashboard)
+#  Runtime: Node.js >= 18.x  |  Package Manager: npm
+# ============================================================
+#
+#  Setup Commands (run once inside the frontend/ directory):
+#
+#    cd frontend
+#    npm install          <- installs all packages below
+#    npm run dev          <- starts dev server at http://localhost:5174
+#    npm run build        <- builds production bundle to frontend/dist/
+#
+#  Node Packages (from frontend/package.json):
+#
+#  dependencies:
+#    react@^19.2.7              <- React core UI framework
+#    react-dom@^19.2.7          <- React DOM renderer
+#    lucide-react@^1.24.0       <- Icon library (ZoomIn, Eye, etc.)
+#    recharts@^3.9.2            <- Chart/graph components for log plots
+#
+#  devDependencies:
+#    vite@^8.1.1                <- Lightning-fast Vite build tool
+#    @vitejs/plugin-react@^6.0.3 <- React JSX transform plugin for Vite
+#    @types/react@^19.2.17      <- TypeScript types for React
+#    @types/react-dom@^19.2.3   <- TypeScript types for React DOM
+#    oxlint@^1.71.0             <- Fast Rust-based JS linter
+#
+# ============================================================

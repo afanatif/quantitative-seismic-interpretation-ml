@@ -12,7 +12,7 @@ match = re.search(r'BLIND_WELL\s*=\s*["\']([^"\']+)["\']', code)
 well_name = match.group(1) if match else "Unknown"
 
 # Load comparison CSV
-csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ml_outputs_v3", "blind_well_actual_vs_predicted.csv"))
+csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ml_outputs_v7", "blind_well_actual_vs_predicted.csv"))
 df = pd.read_csv(csv_path)
 data = df.to_dict(orient="records")
 
