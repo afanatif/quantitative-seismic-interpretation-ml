@@ -1,8 +1,8 @@
-# 🏛️ V11 Machine Learning Architecture, Solution Breakdown & Empirical Results
+# 🏛️ V11 Machine Learning Architecture, Solution Breakdown & Empirical Audit
 ## Quantitative Seismic Interpretation & 3D Reservoir Inversion Engine (Zamzama Field)
 
-> [!NOTE]
-> **Executive Summary**: This document details the technical architecture of the V11 Machine Learning & Quantitative Seismic Inversion Engine. It explains **how V11 solved legacy baseline/scaling bugs**, details the **2-stage cascaded ML pipeline & facies modulation math**, and presents the **empirical results** achieved on blind test wells.
+> [!IMPORTANT]
+> **Empirical Audit Notice**: This document presents the technical architecture of the V11 Machine Learning & Quantitative Seismic Inversion Engine alongside a literal, unedited audit of model performance extracted directly from `ml_outputs_v11/model_performance.csv`.
 
 ---
 
@@ -18,7 +18,7 @@ Before V11, earlier pipeline iterations (V8–V10) suffered from four major phys
 │ 2. Flat Population Mean Baselines        │ Dynamic Polynomial Compaction Trends     │
 │ 3. Static Hardcoded Horizon Tables      │ Dynamic 3D Trace Energy Horizon Scanner  │
 │ 4. Unphysical Shale Predictions (PHIE)  │ Sand-Probability Facies Modulation Engine│
-│ 5. Rayleigh Seismic Blur (18.5m Limit)  │ Hybrid CWT + SSWT Thin-Bed Decomposition │
+│ 5. Rayleigh Seismic Blur (26.7m Limit)  │ Hybrid CWT + SSWT Spectral Decomposition │
 └─────────────────────────────────────────┴──────────────────────────────────────────┘
 ```
 
@@ -32,9 +32,10 @@ Before V11, earlier pipeline iterations (V8–V10) suffered from four major phys
 - **The Bug in V10**: Earlier versions relied on manual lookup tables for well horizon TWT bounds ($2,246\text{ ms} \to 2,394\text{ ms}$ for Z-04). This hardcoding caused boundary clipping errors on new wells.
 - **The V11 Fix**: Implemented **100% dynamic 3D trace energy scanning** (`auto_well_seismic_aligner.py`). The engine scans non-zero trace energy bounds at each borehole coordinate ($k_{\text{first}}$ to $k_{\text{last}}$), dynamically determining exact reservoir channel bounds ($t_{\min}, t_{\max}$) for any well.
 
-### 🔴 Problem 3: Rayleigh Seismic Resolution Limit ($18.5\text{ m}$)
-- **The Bug in V10**: Conventional seismic amplitudes ($\sim 30\text{ Hz}$) cannot resolve reservoir sands thinner than $\lambda / 4 \approx 18.5\text{ meters}$.
-- **The V11 Fix**: Developed a **Hybrid CWT + SSWT Spectral Engine**. Continuous Wavelet Transform (CWT) Morlet envelopes ($10\text{--}40\text{ Hz}$) provide macro structural baselines, while Synchrosqueezed Stockwell Transform (SSWT) phase-reassigned frequency ratios (`si_spec_frac_10`, `si_spec_frac_40`) sharpen smeared energy, resolving sub-seismic thin beds down to **$3.2\text{ meters}$** (**82.7% resolution enhancement**).
+### 🔴 Problem 3: Rayleigh Seismic Resolution Limit ($26.7\text{ m}$)
+- **Physics Calibration**: Using $V = 3200\text{ m/s}$ and dominant frequency $f = 30\text{ Hz}$, Rayleigh's quarter-wavelength tuning limit is:
+  $$\text{Tuning Limit } \frac{\lambda}{4} = \frac{V}{4 \cdot f} = \frac{3200}{4 \cdot 30} = 26.67\text{ m} \approx \mathbf{26.7\text{ meters}}$$
+- **CWT + SSWT Spectral Enhancement**: Continuous Wavelet Transform (CWT) Morlet envelopes ($10\text{--}40\text{ Hz}$) provide macro structural baselines, while Synchrosqueezed Stockwell Transform (SSWT) phase-reassigned frequency ratios (`si_spec_frac_10`, `si_spec_frac_40`) re-align phase energy along instantaneous frequency candidate ridges to enhance thin-bed boundary detection.
 
 ### 🔴 Problem 4: Unphysical Log Predictions in Tight Shales
 - **The Bug in V10**: Pure data-driven ML models predicted non-zero effective porosity ($PHIE > 0$) and hydrocarbon gas saturation in tight non-reservoir shale seals.
@@ -82,31 +83,37 @@ $$\hat{y}_{\text{final}} = (1 - \alpha) \cdot \hat{y}_{\text{ML}} + \alpha \cdot
 
 ---
 
-## 📊 3. Quantitative Results & Empirical Benchmarks
+## 📊 3. Unedited Empirical Results & Model Performance Audit
 
-All models were evaluated under strict **Leave-One-Group-Out Cross-Validation (LOGO-CV)** holding out **blind test well Z-04**:
+The table below reports the **exact, unedited metrics** extracted directly from `ml_outputs_v11/model_performance.csv` evaluated under strict **Leave-One-Group-Out Cross-Validation (LOGO-CV)** holding out **blind test well Z-04**:
 
-### 🏆 Master Performance Table (Z-04 Blind Test Evaluation):
+### 📄 Literal Ground-Truth Metrics Table (`ml_outputs_v11/model_performance.csv`):
 
-| Property | Physical Category | Best Model Strategy | Blind Well $R^2_{\text{tie}}$ | Blind Well MAE Error | Relative Error | Industry Benchmark Comparison |
+| Target | Category | Winning Model Strategy | CV $R^2$ (Selection) | **Blind $R^2$ (Z-04)** | Blind MAE Error | Notes / Status |
 |---|---|---|---|---|---|---|
-| **Synthetic Well Tie** | Wave Physics | Ricker Wavelet ($\theta=105^\circ$) | **$R^2 = 0.994$ (99.4%)** | — | — | 🏆 **Exceeds Industry Std** ($0.70\text{--}0.85$) |
-| **Sonic Slowness ($DT$)** | Acoustic | Stacking (Tree Meta) | $R^2 = +0.0637$ (CV) | **$\pm 1.91\ \mu\text{s/ft}$** | **$< 2.5\%$** | 🏆 **Exceptional Accuracy** ($50\text{--}120\ \mu\text{s/ft}$ scale) |
-| **Bulk Density ($RHOB_{\text{phys}}$)** | Elastic | Physics Derived ($AI / V_p$) | — | **$\pm 0.079\text{ g/cm}^3$** | **$< 3.1\%$** | 🏆 **Exceptional Accuracy** ($2.2\text{--}2.6\text{ g/cm}^3$ scale) |
-| **Total Porosity ($PHIT$)** | Petrophysical | Stacking (Ridge Meta) | $R^2 = +0.1210$ (CV) | **$\pm 1.06\%$ Porosity** | $\pm 0.0106$ | 🏆 **Quantitative Precision** |
-| **Effective Porosity ($PHIE$)** | Petrophysical | Random Forest + FaciesMod | — | **$\pm 1.78\%$ Porosity** | $\pm 0.0178$ | 🏆 **Quantitative Precision** |
-| **Shale Volume ($VSH$)** | Lithology | Extra Trees + FaciesMod | — | $\pm 7.87\%$ Shale Vol | $\pm 0.0787$ | 🏆 **Clear Lithology Discrimination** |
-| **Acoustic Impedance ($AI$)** | Elastic | Stacking (Tree Meta) | $R^2 = +0.1420$ (CV) | $\pm 652.85\ (\text{m/s})\cdot(\text{g/cc})$ | $< 5.2\%$ | 🏆 **Strong Elastic Inversion** |
-| **Thin-Bed Resolution** | Spectral Decomp | CWT + SSWT Hybrid | — | **$3.2\text{ meters}$** | **82.7% Gain** | 🏆 **Sub-Seismic Resolution** ($18.5\text{ m}$ Rayleigh) |
+| **Synthetic Well Tie** | Physics Tie | Ricker Wavelet ($\theta=105^\circ$) | — | **$+0.9940$** | — | 1D Synthetic to 3D Trace Correlation |
+| **AI** | Elastic | Stacking (Tree) | $-0.0092$ | **$-0.1039$** | $651.94\ (\text{m/s})\cdot(\text{g/cc})$ | Low signal from post-stack amplitudes |
+| **DT** | Acoustic | Stacking (Tree) | $+0.0637$ | **$-0.3874$** | $2.03\ \mu\text{s/ft}$ | Weak correlation; narrow MAE range |
+| **MURHO** | Elastic | Stacking (Ridge) | $+0.0382$ | **$+0.0026$** | $2.13\text{ GPa}$ | Near-zero positive skill on blind well |
+| **PHIT** | Petrophysical | Stacking (Ridge) | $-0.5354$ | **$+0.0855$** | $0.0104$ ($1.04\%$) | Modest positive correlation on blind well |
+| **POIS** | Elastic | Stacking (Tree) | $+0.0747$ | **$-0.3280$** | $0.0121$ | Weak correlation |
+| **VPVS** | Elastic | Stacking (Tree) | $+0.0557$ | **$-0.6020$** | $0.0223$ | Weak correlation |
+| **GR** | Petrophysical | Random Forest (Shallow) | $+0.0159$ | **$+0.0591$** | $15.28\text{ API}$ | Modest positive skill on blind well |
+| **RHOB** | Elastic | Random Forest (Shallow) | $-0.1321$ | **$-0.3901$** | $0.0889\text{ g/cm}^3$ | Data-driven model |
+| **RHOB (Phys)** | Elastic | Physics Derived ($AI / V_p$) | $-999.0$ | **$-0.9022$** | $0.1209\text{ g/cm}^3$ | Inherits DT & AI error accumulation |
+| **VSH** | Lithology | Extra Trees (Shallow) | $-0.1162$ | **$-0.0423$** | $0.0736$ ($7.36\%$) | Near-zero correlation |
+| **PHIE** | Petrophysical | Stacking (Tree) | $-0.3819$ | **$+0.0432$** | $0.0170$ ($1.70\%$) | Modest positive skill on blind well |
+| **SWE** | Petrophysical | Random Forest (Shallow) | $-0.1530$ | **$-0.1711$** | $0.2022$ ($20.22\%$) | Negative correlation on blind well |
+| **LMRHO** | Elastic | Random Forest (Shallow) | $-0.0256$ | **$-0.2948$** | $0.4481\text{ GPa}$ | Primary fluid target; negative blind $R^2$ |
 
 ---
 
-## ⚡ 4. CUDA GPU Acceleration Performance
+## ⚡ 4. Hardware Acceleration & Execution Speed
 
-By leveraging NVIDIA CUDA acceleration on an **NVIDIA GeForce RTX 4060**:
-- **XGBoost & LightGBM Models**: Trained with `device='cuda'` and `tree_method='hist'`.
-- **CWT + SSWT Spectral Decomp**: CuPy CUDA array kernels (`cupy-cuda12x[ctk]`).
-- **Total Pipeline Execution Speed**: Complete 10-step inversion across 2.5 Million 3D volume samples finishes in **⚡ 33.7 Seconds**!
+- **CUDA Configuration**: `train_model_v11.py` uses `device='cuda'` and `tree_method='hist'` for XGBoost, and `compute_thin_bed_attributes.py` incorporates CuPy array processing (`cupy-cuda12x[ctk]`).
+- **Runtime Performance**:
+  - **Full ML Pipeline Training (`train_model_v11.py`)**: Takes **~3 to 5 minutes** on GPU/CPU.
+  - **End-to-End Sanity Check (`scratch/sanity_check.py`)**: Takes **33.7 seconds** (verifying binary metadata, array shapes, well alignments, and running the Vite production build test).
 
 ---
 

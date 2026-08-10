@@ -16,17 +16,25 @@ By bridging 1D borehole wireline logs ($Z$) with 3D SEG-Y seismic reflection vol
 
 ---
 
-## 🏆 Key Empirical Achievements & Industry Benchmarks
+## 🏆 Key Empirical Achievements & Model Performance Audit
 
-| Metric / Feature | Benchmark Value | Significance / Standard |
-|---|---|---|
-| **Synthetic-Seismic Well Tie Correlation** | **$R^2 = \mathbf{0.994}$ (99.4% Match)** | Tested on blind well **Z-04** (Industry average: $0.70\text{--}0.85$) |
-| **Sonic Transit Time ($DT$) Accuracy** | **MAE $= \mathbf{\pm 1.91\ \mu\text{s/ft}}$** | **$< 2.5\%$ relative error** across $50\text{--}120\ \mu\text{s/ft}$ scale |
-| **Bulk Density ($RHOB_{\text{phys}}$) Accuracy** | **MAE $= \mathbf{\pm 0.079\text{ g/cm}^3}$** | **$< 3.1\%$ relative error** via $AI / V_p$ physics relation |
-| **Total Porosity ($PHIT$) Accuracy** | **MAE $= \mathbf{\pm 1.06\%}$** | $\pm 0.0106$ porosity fraction on blind test well Z-04 |
-| **Effective Porosity ($PHIE$) Accuracy** | **MAE $= \mathbf{\pm 1.78\%}$** | $\pm 0.0178$ porosity fraction with Facies Modulation |
-| **Thin-Bed Vertical Resolution** | **$\mathbf{3.2\text{ meters}}$** | **82.7% resolution gain** over $18.5\text{ m}$ Rayleigh limit |
-| **CUDA GPU Inversion Speed** | **⚡ 33.7 Seconds** | Full 10-step pipeline execution on NVIDIA RTX 4060 |
+Below are the unedited empirical metrics extracted directly from `ml_outputs_v11/model_performance.csv` (LOGO-CV on Z-04 blind well):
+
+| Target | Category | Winning Model | CV $R^2$ (Selection) | **Blind $R^2$ (Z-04)** | Blind MAE Error | Notes / Status |
+|---|---|---|---|---|---|---|
+| **Synthetic Well Tie** | Wave Physics | Ricker ($\theta=105^\circ$) | — | **$+0.9940$** | — | 1D Synthetic to 3D Trace Correlation |
+| **AI** | Elastic | Stacking (Tree) | $-0.0092$ | **$-0.1039$** | $651.94\ (\text{m/s})\cdot(\text{g/cc})$ | Low signal from post-stack amplitudes |
+| **DT** | Acoustic | Stacking (Tree) | $+0.0637$ | **$-0.3874$** | $2.03\ \mu\text{s/ft}$ | Weak correlation; narrow MAE range |
+| **MURHO** | Elastic | Stacking (Ridge) | $+0.0382$ | **$+0.0026$** | $2.13\text{ GPa}$ | Near-zero positive skill on blind well |
+| **PHIT** | Petrophysical | Stacking (Ridge) | $-0.5354$ | **$+0.0855$** | $0.0104$ ($1.04\%$) | Modest positive correlation on blind well |
+| **POIS** | Elastic | Stacking (Tree) | $+0.0747$ | **$-0.3280$** | $0.0121$ | Weak correlation |
+| **VPVS** | Elastic | Stacking (Tree) | $+0.0557$ | **$-0.6020$** | $0.0223$ | Weak correlation |
+| **GR** | Petrophysical | Random Forest (Shallow) | $+0.0159$ | **$+0.0591$** | $15.28\text{ API}$ | Modest positive skill on blind well |
+| **RHOB** | Elastic | Random Forest (Shallow) | $-0.1321$ | **$-0.3901$** | $0.0889\text{ g/cm}^3$ | Data-driven model |
+| **VSH** | Lithology | Extra Trees (Shallow) | $-0.1162$ | **$-0.0423$** | $0.0736$ ($7.36\%$) | Near-zero correlation |
+| **PHIE** | Petrophysical | Stacking (Tree) | $-0.3819$ | **$+0.0432$** | $0.0170$ ($1.70\%$) | Modest positive skill on blind well |
+| **SWE** | Petrophysical | Random Forest (Shallow) | $-0.1530$ | **$-0.1711$** | $0.2022$ ($20.22\%$) | Negative correlation on blind well |
+| **LMRHO** | Elastic | Random Forest (Shallow) | $-0.0256$ | **$-0.2948$** | $0.4481\text{ GPa}$ | Primary fluid target; negative blind $R^2$ |
 
 ---
 
