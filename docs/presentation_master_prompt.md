@@ -175,10 +175,33 @@ Senior Geophysicists, Exploration Managers, LMKR Technical Mentors & Reviewers.
 
 ---
 
-### SLIDE 12: Future Roadmap — Transfer Learning & GPU Acceleration
-- **Header**: Scaling to 10 GB Volumes & Field-Wide Inversion
+### SLIDE 12: Helping Geoscientists See Below Seismic Resolution
+- **Header**: Thin-Bed Guided Walkthrough & 3D Geobody Extraction
+- **Focus Tab**: `ThinBedTab.jsx`
+- **Visual Panels**:
+  1. **Noise Filtering (SOF)**: Side-by-side raw vs. Structurally-Oriented Filter (SOF) view showing fault boundary preservation.
+  2. **Doublet / Terrace Attribute**: Thin-bed arc length zero-crossing output revealing thin channel sand boundaries.
+  3. **3D Geobody Extraction Result**: 2D crossline slice mask + Geobody Metrics Card (showing volume $m^3$, bounding box coordinates, and intersected wells).
+- **Speaker Note**: Walk through how thin-bed attributes isolate reservoirs that standard seismic blurs, showing calculated geobody volumes.
+
+---
+
+### SLIDE 13: Compare Raw vs. Enhanced Seismic Side-by-Side
+- **Header**: Multi-Scale Spectral Explorer & Interactive Frequency Tuning
+- **Focus Tab**: `SpectralWhiteningTab.jsx` / `SpectralEnhancementExplorerTab.jsx`
+- **Visual Panels**:
+  1. **Main Section**: Full side-by-side interactive view (Raw section left vs. Enhanced section right) with method selector pill bar.
+  2. **Quantitative Inset**: Overlaid power spectrum plot (Power dB vs. Frequency Hz showing bandwidth expansion up to $65\text{ Hz}$).
+  3. **Heatmap Inset**: SSWT time-frequency energy heatmap (spectrogram-style reassigned frequency ridges).
+- **Speaker Note**: Demonstrate the real-time interactive method selector allowing geoscientists to toggle spectral enhancement filters on-the-fly.
+
+---
+
+### SLIDE 14: Future Roadmap & Field-Wide Scaling
+- **Header**: Transfer Learning, Pre-Stack Angle Gathers & GPU Acceleration
 - **Roadmap Highlights**:
-  1. **Transfer Learning via F3 Dataset**: Pretrain 3D CNNs on public North Sea data $\to$ fine-tune top layer on local field wells to boost $VSH/SWE$ correlation.
-  2. **GPU Inversion Speed**: CUDA acceleration (`device='cuda'`) inverts a 10 GB SEG-Y volume into 12 predicted 3D property volumes in **~12 minutes on an RTX 4060 GPU**!
-- **Speaker Note**: Conclude with a vision of how this pipeline scales from 7 wells to 40+ wells across an entire exploration block.
+  1. **Transfer Learning via F3 Dataset**: Pretrain 3D CNNs on public North Sea data $\to$ fine-tune top layer on local field wells.
+  2. **Pre-Stack AVO Inversion**: Incorporate angle gathers ($P$-wave, $S$-wave, Density decomposition) when pre-stack SEG-Y data is acquired.
+  3. **GPU Inversion Speed**: CUDA acceleration (`device='cuda'`) inverts a 10 GB SEG-Y volume into 12 predicted 3D property volumes in **~12 minutes on an RTX 4060 GPU**!
+- **Speaker Note**: Conclude with a clear roadmap showing how the workstation scales to enterprise field-wide inversion.
 ```
